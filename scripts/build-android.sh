@@ -162,7 +162,6 @@ GRADLE
 cat > "$gradle_project/build.gradle.kts" <<GRADLE
 plugins {
     id("com.android.library") version "$ANDROID_GRADLE_PLUGIN_VERSION"
-    id("org.jetbrains.kotlin.android") version "$KOTLIN_VERSION"
 }
 
 android {

@@ -114,10 +114,14 @@ device_native="$target_dir/$IOS_DEVICE_TARGET/release/libmatrix_sdk_crypto_ffi.a
 simulator_native="$target_dir/$IOS_SIMULATOR_TARGET/release/libmatrix_sdk_crypto_ffi.a"
 test -s "$device_native"
 test -s "$simulator_native"
-"$llvm_nm" -gUj "$device_native" | sed 's/^_//' \
-  | grep -Eq '^(ffi|uniffi)_[A-Za-z0-9_]+$'
-"$llvm_nm" -gUj "$simulator_native" | sed 's/^_//' \
-  | grep -Eq '^(ffi|uniffi)_[A-Za-z0-9_]+$'
+device_symbols="$scratch/device-symbols.txt"
+simulator_symbols="$scratch/simulator-symbols.txt"
+"$llvm_nm" -gUj "$device_native" > "$device_symbols"
+"$llvm_nm" -gUj "$simulator_native" > "$simulator_symbols"
+test -s "$device_symbols"
+test -s "$simulator_symbols"
+grep -Eq '^_?(ffi|uniffi)_[A-Za-z0-9_]+$' "$device_symbols"
+grep -Eq '^_?(ffi|uniffi)_[A-Za-z0-9_]+$' "$simulator_symbols"
 
 CARGO_TARGET_DIR="$target_dir" \
   cargo "+$RUST_TOOLCHAIN" run --locked \
