@@ -1,0 +1,165 @@
+name: Matrix Crypto mobile validation artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Build both platforms or one targeted diagnostic platform
+        required: false
+        default: both
+        type: choice
+        options:
+          - both
+          - ios
+          - android
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/mobile-artifacts.yml
+      - pins/**
+      - scripts/**
+      - THIRD_PARTY_NOTICES.md
+
+permissions:
+  contents: read
+
+concurrency:
+  group: matrix-crypto-mobile-artifacts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    if: github.actor == github.repository_owner && github.ref == 'refs/heads/main' && inputs.platform != 'android'
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+
+    steps:
+      - name: Check out only this public build repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Install fixed protoc
+        uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e
+        with:
+          tool: protoc@3.20.3
+
+      - name: Build pinned iOS validation payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/build-ios.sh "$RUNNER_TEMP/matrix-crypto-ios-artifact"
+
+      - name: Create and verify canonical iOS manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_root="$RUNNER_TEMP/matrix-crypto-ios-artifact"
+          python3 scripts/create-manifest.py \
+            --platform ios \
+            --artifact-root "$artifact_root" \
+            --workflow-commit "$GITHUB_SHA" \
+            --event "$GITHUB_EVENT_NAME" \
+            --branch main
+          python3 scripts/verify-manifest.py \
+            --platform ios \
+            --artifact-root "$artifact_root" \
+            --expected-workflow-commit "$GITHUB_SHA" \
+            --expected-event "$GITHUB_EVENT_NAME" \
+            --expected-branch main
+          find "$artifact_root" -type f -print \
+            | sed "s#^$artifact_root/##" \
+            | LC_ALL=C sort
+
+      - name: Upload only allowlisted iOS validation files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: matrix-crypto-mobile-validation-ios
+          path: |
+            ${{ runner.temp }}/matrix-crypto-ios-artifact/manifest.json
+            ${{ runner.temp }}/matrix-crypto-ios-artifact/SHA256SUMS
+            ${{ runner.temp }}/matrix-crypto-ios-artifact/swift
+            ${{ runner.temp }}/matrix-crypto-ios-artifact/headers
+            ${{ runner.temp }}/matrix-crypto-ios-artifact/MatrixSDKCryptoFFI.xcframework
+            ${{ runner.temp }}/matrix-crypto-ios-artifact/LICENSES/MATRIX_RUST_SDK_LICENSE
+            ${{ runner.temp }}/matrix-crypto-ios-artifact/THIRD_PARTY_NOTICES.md
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 1
+
+  android:
+    if: github.actor == github.repository_owner && github.ref == 'refs/heads/main' && inputs.platform != 'ios'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out only this public build repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Install fixed protoc
+        uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e
+        with:
+          tool: protoc@3.20.3
+
+      - name: Install fixed cargo-ndk
+        uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e
+        with:
+          tool: cargo-ndk@4.1.2
+
+      - name: Install fixed Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779
+        with:
+          ndk-version: r27c
+          add-to-path: true
+          local-cache: false
+
+      - name: Build pinned Android validation payload
+        shell: bash
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          scripts/build-android.sh "$RUNNER_TEMP/matrix-crypto-android-artifact"
+
+      - name: Create and verify canonical Android manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_root="$RUNNER_TEMP/matrix-crypto-android-artifact"
+          python3 scripts/create-manifest.py \
+            --platform android \
+            --artifact-root "$artifact_root" \
+            --workflow-commit "$GITHUB_SHA" \
+            --event "$GITHUB_EVENT_NAME" \
+            --branch main
+          python3 scripts/verify-manifest.py \
+            --platform android \
+            --artifact-root "$artifact_root" \
+            --expected-workflow-commit "$GITHUB_SHA" \
+            --expected-event "$GITHUB_EVENT_NAME" \
+            --expected-branch main
+          find "$artifact_root" -type f -print \
+            | sed "s#^$artifact_root/##" \
+            | LC_ALL=C sort
+
+      - name: Upload only allowlisted Android validation files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: matrix-crypto-mobile-validation-android
+          path: |
+            ${{ runner.temp }}/matrix-crypto-android-artifact/manifest.json
+            ${{ runner.temp }}/matrix-crypto-android-artifact/SHA256SUMS
+            ${{ runner.temp }}/matrix-crypto-android-artifact/kotlin
+            ${{ runner.temp }}/matrix-crypto-android-artifact/jni/arm64-v8a/libmatrix_sdk_crypto_ffi.so
+            ${{ runner.temp }}/matrix-crypto-android-artifact/aar/matrix-sdk-crypto-ffi-validation.aar
+            ${{ runner.temp }}/matrix-crypto-android-artifact/LICENSES/MATRIX_RUST_SDK_LICENSE
+            ${{ runner.temp }}/matrix-crypto-android-artifact/THIRD_PARTY_NOTICES.md
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 1

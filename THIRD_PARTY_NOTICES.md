@@ -7,4 +7,6 @@ to tag `matrix-sdk-0.18.0` and commit
 
 Redistributed generated or native outputs must retain the upstream license and
 notices shipped with that exact source revision. This initial runner probe does
-not contain or distribute any third-party source or generated artifact.
+not contain or distribute any third-party source or generated artifact. Build
+artifacts include the exact upstream `LICENSE` file with SHA-256
+`0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594`.
