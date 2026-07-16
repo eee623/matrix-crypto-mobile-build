@@ -1,0 +1,41 @@
+name: Public runner smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-runner-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    if: github.actor == github.repository_owner
+    runs-on: macos-14
+    timeout-minutes: 5
+    steps:
+      - name: Report public macOS toolchain availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -s
+          uname -m
+          xcodebuild -version
+          swift --version
+          rustc --version
+
+  ubuntu:
+    if: github.actor == github.repository_owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Report public Ubuntu toolchain availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -s
+          uname -m
+          rustc --version
+          java -version
