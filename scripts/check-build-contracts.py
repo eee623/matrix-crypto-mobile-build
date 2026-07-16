@@ -164,6 +164,8 @@ def check_android_contract(errors, pins):
             required_metadata_artifacts = {
                 ("com.google.guava", "guava-parent", "33.3.1-jre",
                  "guava-parent-33.3.1-jre.pom"),
+                ("org.jetbrains.kotlinx", "kotlinx-coroutines-bom", "1.8.0",
+                 "kotlinx-coroutines-bom-1.8.0.pom"),
                 ("org.junit", "junit-bom", "5.10.2", "junit-bom-5.10.2.module"),
                 ("org.junit", "junit-bom", "5.11.0-M2", "junit-bom-5.11.0-M2.module"),
             }
@@ -188,8 +190,12 @@ def check_android_contract(errors, pins):
                 "Android fresh Gradle resolution regression does not enforce strict verification")
         require(errors, "--offline" in regression,
                 "Android fresh Gradle resolution regression does not repeat from cache offline")
-        require(errors, "com.android.tools.build:gradle:" in regression,
-                "Android fresh Gradle resolution regression does not resolve the AGP classpath")
+        require(errors, 'id("com.android.library") version' in regression,
+                "Android fresh Gradle resolution regression does not mirror the AGP plugin path")
+        require(errors, "kotlinBuildToolsApiClasspath" in regression,
+                "Android fresh Gradle resolution regression does not resolve Kotlin build tools metadata")
+        require(errors, "src\" / \"main\" / \"kotlin" in regression,
+                "Android fresh Gradle resolution regression does not compile a real Kotlin source path")
 
     require(errors, '"androidx_annotation": pins["ANDROIDX_ANNOTATION_VERSION"]' in manifest,
             "artifact toolchain omits the AndroidX Annotation version")

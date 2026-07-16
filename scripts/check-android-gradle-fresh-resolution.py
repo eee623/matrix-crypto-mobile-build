@@ -77,8 +77,68 @@ def safe_extract_zip(archive, destination):
         zipped.extractall(destination)
 
 
+def validate_gradle(gradle, version):
+    if not gradle.is_file():
+        return False
+    gradle.chmod(gradle.stat().st_mode | 0o755)
+    result = run([gradle, "--version"], timeout_seconds=60)
+    return f"Gradle {version}" in result.stdout
+
+
+def cached_gradle(pins):
+    version = pins["GRADLE_VERSION"]
+    override = os.environ.get("PINNED_GRADLE_HOME")
+    candidates = []
+    if override:
+        candidates.append(Path(override) / "bin" / "gradle")
+    wrapper_root = Path.home() / ".gradle" / "wrapper" / "dists" / f"gradle-{version}-bin"
+    if wrapper_root.is_dir():
+        candidates.extend(wrapper_root.glob(f"*/gradle-{version}/bin/gradle"))
+    for gradle in candidates:
+        if validate_gradle(gradle, version):
+            return gradle
+    return None
+
+
+def download_gradle(pins, scratch):
+    curl = shutil.which("curl")
+    if curl is None:
+        raise SystemExit("curl is required")
+    version = pins["GRADLE_VERSION"]
+    gradle_zip = scratch / f"gradle-{version}-bin.zip"
+    gradle_home = scratch / f"gradle-{version}"
+    run(
+        [
+            curl,
+            "--fail",
+            "--location",
+            "--silent",
+            "--show-error",
+            "--retry",
+            "5",
+            "--retry-all-errors",
+            "--connect-timeout",
+            "30",
+            "--max-time",
+            "180",
+            "--output",
+            gradle_zip,
+            f"https://downloads.gradle.org/distributions/gradle-{version}-bin.zip",
+        ],
+        timeout_seconds=240,
+    )
+    if sha256(gradle_zip) != pins["GRADLE_SHA256"]:
+        raise SystemExit("Gradle distribution hash mismatch")
+    safe_extract_zip(gradle_zip, scratch)
+    gradle = gradle_home / "bin" / "gradle"
+    if not validate_gradle(gradle, version):
+        raise SystemExit("Gradle executable missing or version mismatch after extraction")
+    return gradle
+
+
 def write_gradle_project(project, pins):
     (project / "gradle").mkdir(parents=True)
+    (project / "src" / "main" / "kotlin" / "org" / "matrix" / "validation").mkdir(parents=True)
     shutil.copy2(
         REPO_ROOT / "pins" / "android" / "verification-metadata.xml",
         project / "gradle" / "verification-metadata.xml",
@@ -91,30 +151,62 @@ def write_gradle_project(project, pins):
         gradlePluginPortal()
     }
 }
-rootProject.name = "MatrixCryptoAgpClasspathVerification"
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "MatrixCryptoKotlinBuildToolsVerification"
 """,
         encoding="utf-8",
     )
     (project / "build.gradle.kts").write_text(
-        f"""buildscript {{
-    repositories {{
-        google()
-        mavenCentral()
-        gradlePluginPortal()
+        f"""plugins {{
+    id("com.android.library") version "{pins["ANDROID_GRADLE_PLUGIN_VERSION"]}"
+}}
+
+android {{
+    namespace = "org.matrix.validation"
+    compileSdk = 37
+
+    defaultConfig {{
+        minSdk = {pins["ANDROID_MINIMUM_API"]}
     }}
-    dependencies {{
-        classpath("com.android.tools.build:gradle:{pins["ANDROID_GRADLE_PLUGIN_VERSION"]}")
+
+    compileOptions {{
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }}
+
+    kotlin {{
+        compilerOptions {{
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }}
     }}
 }}
 
-tasks.register("verifyAgpClasspath")
-tasks.named("verifyAgpClasspath") {{
+tasks.register("verifyKotlinBuildToolsApiClasspath") {{
     doLast {{
-        val files = buildscript.configurations.getByName("classpath").resolve()
-        require(files.isNotEmpty()) {{ "AGP classpath did not resolve" }}
-        println("agp_classpath_files=${{files.size}}")
+        val classpath = configurations.getByName("kotlinBuildToolsApiClasspath").resolve()
+        require(classpath.isNotEmpty()) {{ "Kotlin build tools API classpath did not resolve" }}
+        println("kotlin_build_tools_api_classpath_files=${{classpath.size}}")
     }}
 }}
+""",
+        encoding="utf-8",
+    )
+    (project / "src" / "main" / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android" />\n',
+        encoding="utf-8",
+    )
+    (project / "src" / "main" / "kotlin" / "org" / "matrix" / "validation" / "Regression.kt").write_text(
+        """package org.matrix.validation
+
+object Regression {
+    fun answer(): Int = 42
+}
 """,
         encoding="utf-8",
     )
@@ -127,41 +219,12 @@ def main():
     if missing:
         raise SystemExit(f"missing pins: {', '.join(missing)}")
 
-    curl = shutil.which("curl")
-    if curl is None:
-        raise SystemExit("curl is required")
-
     with tempfile.TemporaryDirectory(prefix="matrix-gradle-fresh-") as scratch_name:
         scratch = Path(scratch_name)
-        gradle_version = pins["GRADLE_VERSION"]
-        gradle_zip = scratch / f"gradle-{gradle_version}-bin.zip"
-        gradle_home = scratch / f"gradle-{gradle_version}"
-        project = scratch / "validation-classpath"
+        project = scratch / "validation-aar"
         gradle_user_home = scratch / "gradle-user-home"
 
-        run(
-            [
-                curl,
-                "--fail",
-                "--location",
-                "--silent",
-                "--show-error",
-                "--retry",
-                "5",
-                "--retry-all-errors",
-                "--output",
-                gradle_zip,
-                f"https://downloads.gradle.org/distributions/gradle-{gradle_version}-bin.zip",
-            ]
-        )
-        if sha256(gradle_zip) != pins["GRADLE_SHA256"]:
-            raise SystemExit("Gradle distribution hash mismatch")
-        safe_extract_zip(gradle_zip, scratch)
-
-        gradle = gradle_home / "bin" / "gradle"
-        if not gradle.is_file():
-            raise SystemExit("Gradle executable missing after extraction")
-        gradle.chmod(gradle.stat().st_mode | 0o755)
+        gradle = cached_gradle(pins) or download_gradle(pins, scratch)
 
         project.mkdir()
         write_gradle_project(project, pins)
@@ -180,7 +243,7 @@ def main():
             "--no-daemon",
             "--project-dir",
             project,
-            "verifyAgpClasspath",
+            "verifyKotlinBuildToolsApiClasspath",
         ]
         run(base_command, env=env)
         run([*base_command, "--offline"], env=env)
