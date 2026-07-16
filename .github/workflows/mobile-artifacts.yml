@@ -17,6 +17,7 @@ on:
       - main
     paths:
       - .github/workflows/mobile-artifacts.yml
+      - README.md
       - pins/**
       - scripts/**
       - THIRD_PARTY_NOTICES.md
@@ -41,6 +42,14 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
+
+      - name: Verify local build and manifest contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/build-ios.sh scripts/build-android.sh
+          python3 scripts/check-build-contracts.py
+          python3 scripts/check-manifest-contracts.py
 
       - name: Install fixed protoc
         uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e
@@ -101,6 +110,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Verify local build and manifest contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/build-ios.sh scripts/build-android.sh
+          python3 scripts/check-build-contracts.py
+          python3 scripts/check-manifest-contracts.py
+
       - name: Install fixed protoc
         uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e
         with:
@@ -158,6 +175,7 @@ jobs:
             ${{ runner.temp }}/matrix-crypto-android-artifact/kotlin
             ${{ runner.temp }}/matrix-crypto-android-artifact/jni/arm64-v8a/libmatrix_sdk_crypto_ffi.so
             ${{ runner.temp }}/matrix-crypto-android-artifact/aar/matrix-sdk-crypto-ffi-validation.aar
+            ${{ runner.temp }}/matrix-crypto-android-artifact/LICENSES/ANDROIDX_ANNOTATION_LICENSE
             ${{ runner.temp }}/matrix-crypto-android-artifact/LICENSES/MATRIX_RUST_SDK_LICENSE
             ${{ runner.temp }}/matrix-crypto-android-artifact/THIRD_PARTY_NOTICES.md
           if-no-files-found: error

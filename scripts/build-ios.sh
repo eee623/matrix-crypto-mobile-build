@@ -75,8 +75,14 @@ test "$(shasum -a 256 "$source_root/Cargo.lock" | awk '{print $1}')" = \
   "$MATRIX_EFFECTIVE_LOCK_SHA256"
 test "$(shasum -a 256 "$source_root/bindings/matrix-sdk-crypto-ffi/uniffi.toml" | awk '{print $1}')" = \
   "$MATRIX_UNIFFI_SHA256"
+test "$(shasum -a 256 "$source_root/crates/matrix-sdk-crypto/uniffi.toml" | awk '{print $1}')" = \
+  "$MATRIX_DEPENDENCY_UNIFFI_SHA256"
+test "$(shasum -a 256 "$source_root/crates/matrix-sdk-common/uniffi.toml" | awk '{print $1}')" = \
+  "$MATRIX_DEPENDENCY_UNIFFI_SHA256"
 test "$(shasum -a 256 "$source_root/LICENSE" | awk '{print $1}')" = \
   "$MATRIX_LICENSE_SHA256"
+test "$(shasum -a 256 "$repo_root/THIRD_PARTY_NOTICES.md" | awk '{print $1}')" = \
+  "$THIRD_PARTY_NOTICES_SHA256"
 
 test "$(xcodebuild -version | sed -n '1p')" = "Xcode $IOS_XCODE_VERSION"
 test "$(xcodebuild -version | sed -n '2p')" = "Build version $IOS_XCODE_BUILD"
@@ -124,24 +130,65 @@ grep -Eq '^_?(ffi|uniffi)_[A-Za-z0-9_]+$' "$device_symbols"
 grep -Eq '^_?(ffi|uniffi)_[A-Za-z0-9_]+$' "$simulator_symbols"
 
 CARGO_TARGET_DIR="$target_dir" \
-  cargo "+$RUST_TOOLCHAIN" run --locked \
+  cargo "+$RUST_TOOLCHAIN" build --locked \
     --manifest-path "$source_root/Cargo.toml" \
     -p "$MATRIX_PACKAGE" --release \
     --bin matrix_sdk_crypto_ffi \
-    --no-default-features --features "$MATRIX_FEATURES" \
-    -- generate --language swift --library "$device_native" \
-    --out-dir "$generated_dir"
+    --no-default-features --features "$MATRIX_FEATURES"
+
+generator_bin="$target_dir/release/matrix_sdk_crypto_ffi"
+generator_help="$scratch/uniffi-generate-help.txt"
+generator_stdout="$scratch/uniffi-swift.stdout"
+generator_stderr="$scratch/uniffi-swift.stderr"
+test -x "$generator_bin"
+if ! generator_version="$("$generator_bin" --version 2>/dev/null)"; then
+  echo "UniFFI version command failed" >&2
+  exit 1
+fi
+if [[ "$generator_version" != "uniffi-bindgen $UNIFFI_VERSION" ]]; then
+  echo "UniFFI version contract mismatch" >&2
+  exit 1
+fi
+if ! "$generator_bin" generate --help > "$generator_help" 2>&1; then
+  echo "UniFFI generate help command failed" >&2
+  exit 1
+fi
+for expected_help in '--language <LANGUAGE>' '--out-dir <OUT_DIR>' '--library' '<SOURCE>'; do
+  if ! grep -Fq -- "$expected_help" "$generator_help"; then
+    printf 'UniFFI generate help is missing required token: %s\n' "$expected_help" >&2
+    exit 1
+  fi
+done
+
+set +e
+"$generator_bin" generate --language swift --library "$device_native" \
+  --out-dir "$generated_dir" > "$generator_stdout" 2> "$generator_stderr"
+generator_status=$?
+set -e
+generator_stdout_bytes="$(stat -f '%z' "$generator_stdout")"
+generator_stderr_bytes="$(stat -f '%z' "$generator_stderr")"
+printf 'UniFFI Swift generator exit code: %s\n' "$generator_status"
+printf 'UniFFI Swift generator stdout bytes: %s\n' "$generator_stdout_bytes"
+printf 'UniFFI Swift generator stderr bytes: %s\n' "$generator_stderr_bytes"
+if [[ "$generator_status" -ne 0 ]]; then
+  python3 "$repo_root/scripts/print-safe-diagnostic.py" \
+    --label stdout --input "$generator_stdout" \
+    --redact-root "$RUNNER_TEMP" --redact-root "$repo_root"
+  python3 "$repo_root/scripts/print-safe-diagnostic.py" \
+    --label stderr --input "$generator_stderr" \
+    --redact-root "$RUNNER_TEMP" --redact-root "$repo_root"
+  exit "$generator_status"
+fi
 
 mkdir -p "$output_dir/swift" "$output_dir/headers" "$output_dir/LICENSES"
-find "$generated_dir" -maxdepth 1 -type f -name '*.swift' \
-  -exec cp {} "$output_dir/swift/" \;
-find "$generated_dir" -maxdepth 1 -type f -name '*.h' \
-  -exec cp {} "$output_dir/headers/" \;
-test "$(find "$output_dir/swift" -type f -name '*.swift' | wc -l | tr -d '[:space:]')" -gt 0
-test "$(find "$output_dir/headers" -type f -name '*.h' | wc -l | tr -d '[:space:]')" -gt 0
-test "$(find "$generated_dir" -maxdepth 1 -type f -name '*.modulemap' | wc -l | tr -d '[:space:]')" = "1"
-find "$generated_dir" -maxdepth 1 -type f -name '*.modulemap' \
-  -exec cp {} "$output_dir/headers/module.modulemap" \;
+swift_components=(MatrixSDKCrypto matrix_sdk_common matrix_sdk_crypto)
+for component in "${swift_components[@]}"; do
+  cp "$generated_dir/$component.swift" "$output_dir/swift/$component.swift"
+  cp "$generated_dir/${component}FFI.h" "$output_dir/headers/${component}FFI.h"
+done
+python3 "$repo_root/scripts/merge-swift-modulemaps.py" \
+  --generated-dir "$generated_dir" \
+  --output "$output_dir/headers/module.modulemap"
 
 xcodebuild -create-xcframework \
   -library "$device_native" -headers "$output_dir/headers" \

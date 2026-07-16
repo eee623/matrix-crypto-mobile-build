@@ -29,8 +29,13 @@ The owner-only workflow builds two short-lived artifacts in parallel:
   native library, and a validation-only AAR.
 
 The validation AAR is a file artifact rather than a Maven publication. A
-consumer must add the pinned public dependency `net.java.dev.jna:jna:5.17.0`
-when compiling or running the generated Kotlin bindings.
+consumer must add the pinned public dependencies
+`net.java.dev.jna:jna:5.17.0` and
+`androidx.annotation:annotation:1.10.0` when compiling or running the generated
+Kotlin bindings. The AAR is compiled with Android Gradle Plugin 9.2 built-in
+Kotlin, a committed Gradle dependency lock, and strict SHA-256 dependency
+verification metadata; it does not apply the legacy
+`org.jetbrains.kotlin.android` plugin.
 
 Every artifact contains a canonical `manifest.json`, `SHA256SUMS`, and upstream
 license attribution. Artifact retention is one day. A consumer must verify the

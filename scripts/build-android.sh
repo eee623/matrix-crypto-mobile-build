@@ -79,7 +79,24 @@ printf '%s  %s\n' "$MATRIX_EFFECTIVE_LOCK_SHA256" "$source_root/Cargo.lock" \
 printf '%s  %s\n' "$MATRIX_UNIFFI_SHA256" \
   "$source_root/bindings/matrix-sdk-crypto-ffi/uniffi.toml" \
   | sha256sum --check --status
+printf '%s  %s\n' "$MATRIX_DEPENDENCY_UNIFFI_SHA256" \
+  "$source_root/crates/matrix-sdk-crypto/uniffi.toml" \
+  | sha256sum --check --status
+printf '%s  %s\n' "$MATRIX_DEPENDENCY_UNIFFI_SHA256" \
+  "$source_root/crates/matrix-sdk-common/uniffi.toml" \
+  | sha256sum --check --status
 printf '%s  %s\n' "$MATRIX_LICENSE_SHA256" "$source_root/LICENSE" \
+  | sha256sum --check --status
+printf '%s  %s\n' "$THIRD_PARTY_NOTICES_SHA256" "$repo_root/THIRD_PARTY_NOTICES.md" \
+  | sha256sum --check --status
+printf '%s  %s\n' "$ANDROIDX_ANNOTATION_LICENSE_SHA256" \
+  "$repo_root/pins/licenses/ANDROIDX_ANNOTATION_LICENSE" \
+  | sha256sum --check --status
+printf '%s  %s\n' "$ANDROID_DEPENDENCY_LOCK_SHA256" \
+  "$repo_root/pins/android/gradle.lockfile" \
+  | sha256sum --check --status
+printf '%s  %s\n' "$ANDROID_DEPENDENCY_VERIFICATION_SHA256" \
+  "$repo_root/pins/android/verification-metadata.xml" \
   | sha256sum --check --status
 
 test "$(sed -n 's/^Pkg.Revision = //p' "$ANDROID_NDK_HOME/source.properties")" = \
@@ -137,9 +154,12 @@ test -x "$gradle_home/bin/gradle"
 "$gradle_home/bin/gradle" --version | grep -F "Gradle $GRADLE_VERSION"
 
 mkdir -p "$gradle_project/src/main/kotlin" \
-  "$gradle_project/src/main/jniLibs/$ANDROID_ABI"
+  "$gradle_project/src/main/jniLibs/$ANDROID_ABI" "$gradle_project/gradle"
 cp -R "$output_dir/kotlin/". "$gradle_project/src/main/kotlin/"
 cp "$native" "$gradle_project/src/main/jniLibs/$ANDROID_ABI/libmatrix_sdk_crypto_ffi.so"
+cp "$repo_root/pins/android/gradle.lockfile" "$gradle_project/gradle.lockfile"
+cp "$repo_root/pins/android/verification-metadata.xml" \
+  "$gradle_project/gradle/verification-metadata.xml"
 
 cat > "$gradle_project/settings.gradle.kts" <<'GRADLE'
 pluginManagement {
@@ -192,6 +212,11 @@ android {
 
 dependencies {
     api("net.java.dev.jna:jna:$JNA_VERSION")
+    api("androidx.annotation:annotation:$ANDROIDX_ANNOTATION_VERSION")
+}
+
+dependencyLocking {
+    lockAllConfigurations()
 }
 GRADLE
 
@@ -199,9 +224,12 @@ cat > "$gradle_project/src/main/AndroidManifest.xml" <<'XML'
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" />
 XML
 
-"$gradle_home/bin/gradle" --no-daemon --project-dir "$gradle_project" assembleRelease
+"$gradle_home/bin/gradle" --dependency-verification strict \
+  --no-daemon --project-dir "$gradle_project" assembleRelease
 aar_path="$(find "$gradle_project/build/outputs/aar" -type f -name '*release.aar' | sort | head -n 1)"
 test -s "$aar_path"
 cp "$aar_path" "$output_dir/aar/matrix-sdk-crypto-ffi-validation.aar"
 cp "$source_root/LICENSE" "$output_dir/LICENSES/MATRIX_RUST_SDK_LICENSE"
+cp "$repo_root/pins/licenses/ANDROIDX_ANNOTATION_LICENSE" \
+  "$output_dir/LICENSES/ANDROIDX_ANNOTATION_LICENSE"
 cp "$repo_root/THIRD_PARTY_NOTICES.md" "$output_dir/THIRD_PARTY_NOTICES.md"

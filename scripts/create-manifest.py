@@ -19,9 +19,17 @@ SENSITIVE_NEEDLES = (
     b"github_pat_",
     b"ghp_",
     b"gho_",
+    b"ghr_",
+    b"ghs_",
+    b"ghu_",
     b"-----begin private key-----",
     b"-----begin rsa private key-----",
     b"-----begin ec private key-----",
+)
+ANDROID_KOTLIN_PREFIXES = (
+    "org/matrix/rustcomponents/sdk/crypto/",
+    "uniffi/matrix_sdk_crypto/",
+    "uniffi/matrix_sdk_common/",
 )
 
 
@@ -54,6 +62,8 @@ def allowed_path(platform, relative):
     parts = path.parts
     if relative in {"LICENSES/MATRIX_RUST_SDK_LICENSE", "THIRD_PARTY_NOTICES.md"}:
         return True
+    if platform == "android" and relative == "LICENSES/ANDROIDX_ANNOTATION_LICENSE":
+        return True
     if platform == "ios":
         if len(parts) == 2 and parts[0] == "swift" and path.suffix == ".swift":
             return True
@@ -79,7 +89,10 @@ def allowed_path(platform, relative):
         ):
             return True
     if platform == "android":
-        if len(parts) >= 2 and parts[0] == "kotlin" and path.suffix == ".kt":
+        if (
+            path.suffix == ".kt"
+            and any(relative.startswith(f"kotlin/{prefix}") for prefix in ANDROID_KOTLIN_PREFIXES)
+        ):
             return True
         if relative == "jni/arm64-v8a/libmatrix_sdk_crypto_ffi.so":
             return True
@@ -166,11 +179,11 @@ def validate_aar(root):
         class_names = [info.filename for info in infos]
         if len(class_names) != len(set(class_names)):
             fail("Android classes.jar has duplicate entries")
-        if not any(
-            name.startswith("org/matrix/rustcomponents/sdk/crypto/") and name.endswith(".class")
-            for name in class_names
+        if not all(
+            any(name.startswith(prefix) and name.endswith(".class") for name in class_names)
+            for prefix in ANDROID_KOTLIN_PREFIXES
         ):
-            fail("Android AAR has no generated Matrix Crypto classes")
+            fail("Android AAR generated component class set is incomplete")
         expanded_bytes = 0
         for info in infos:
             if not safe_zip_name(info.filename) or zip_entry_is_symlink(info):
@@ -179,7 +192,7 @@ def validate_aar(root):
                 info.is_dir()
                 or info.filename.startswith("META-INF/")
                 or (
-                    info.filename.startswith("org/matrix/rustcomponents/sdk/crypto/")
+                    any(info.filename.startswith(prefix) for prefix in ANDROID_KOTLIN_PREFIXES)
                     and info.filename.endswith(".class")
                 )
             )
@@ -246,6 +259,8 @@ def scan_payload(root, platform):
         relative = path.relative_to(root).as_posix()
         if relative in METADATA_FILES:
             continue
+        if any(part.startswith(".") for part in PurePosixPath(relative).parts):
+            fail("artifact hidden path is forbidden")
         if not allowed_path(platform, relative):
             fail("artifact path is not allowlisted")
         if metadata.st_size <= 0 or metadata.st_size > MAX_FILE_BYTES:
@@ -255,6 +270,13 @@ def scan_payload(root, platform):
         total += metadata.st_size
     if not files or total > MAX_TOTAL_BYTES:
         fail("artifact tree size is outside the allowed range")
+    pins = load_pins()
+    matrix_license = files.get("LICENSES/MATRIX_RUST_SDK_LICENSE")
+    if matrix_license is None or matrix_license["sha256"] != pins["MATRIX_LICENSE_SHA256"]:
+        fail("Matrix Rust SDK license hash mismatch")
+    notices = files.get("THIRD_PARTY_NOTICES.md")
+    if notices is None or notices["sha256"] != pins["THIRD_PARTY_NOTICES_SHA256"]:
+        fail("third-party notices hash mismatch")
     if platform == "ios":
         required = (
             any(name.startswith("swift/") and name.endswith(".swift") for name in files)
@@ -263,15 +285,28 @@ def scan_payload(root, platform):
             and "MatrixSDKCryptoFFI.xcframework/Info.plist" in files
             and any("ios-arm64/" in name and name.endswith(".a") for name in files)
             and any("ios-arm64-simulator/" in name and name.endswith(".a") for name in files)
+            and "LICENSES/MATRIX_RUST_SDK_LICENSE" in files
+            and "THIRD_PARTY_NOTICES.md" in files
         )
         if required:
             validate_xcframework(root)
     else:
         required = (
-            any(name.startswith("kotlin/") and name.endswith(".kt") for name in files)
+            all(
+                any(name.startswith(f"kotlin/{prefix}") and name.endswith(".kt") for name in files)
+                for prefix in ANDROID_KOTLIN_PREFIXES
+            )
             and "jni/arm64-v8a/libmatrix_sdk_crypto_ffi.so" in files
             and "aar/matrix-sdk-crypto-ffi-validation.aar" in files
+            and "LICENSES/ANDROIDX_ANNOTATION_LICENSE" in files
+            and "LICENSES/MATRIX_RUST_SDK_LICENSE" in files
+            and "THIRD_PARTY_NOTICES.md" in files
         )
+        android_license = files.get("LICENSES/ANDROIDX_ANNOTATION_LICENSE")
+        if android_license is None or android_license["sha256"] != pins[
+            "ANDROIDX_ANNOTATION_LICENSE_SHA256"
+        ]:
+            fail("AndroidX Annotation license hash mismatch")
         if required:
             validate_aar(root)
     if not required:
@@ -294,6 +329,9 @@ def source_contract(pins):
         "feature_args": ["--no-default-features", "--features", pins["MATRIX_FEATURES"]],
         "package": f'{pins["MATRIX_PACKAGE"]}@{pins["MATRIX_PACKAGE_VERSION"]}',
         "tag": pins["MATRIX_TAG"],
+        "third_party_notices_sha256": pins["THIRD_PARTY_NOTICES_SHA256"],
+        "uniffi": pins["UNIFFI_VERSION"],
+        "dependency_configs_sha256": pins["MATRIX_DEPENDENCY_UNIFFI_SHA256"],
         "uniffi_toml_sha256": pins["MATRIX_UNIFFI_SHA256"],
     }
 
@@ -319,7 +357,10 @@ def toolchain_contract(platform, pins):
         **common,
         "abi": pins["ANDROID_ABI"],
         "android_gradle_plugin": pins["ANDROID_GRADLE_PLUGIN_VERSION"],
+        "androidx_annotation": pins["ANDROIDX_ANNOTATION_VERSION"],
         "cargo_ndk": pins["CARGO_NDK_VERSION"],
+        "dependency_lock_sha256": pins["ANDROID_DEPENDENCY_LOCK_SHA256"],
+        "dependency_verification_sha256": pins["ANDROID_DEPENDENCY_VERIFICATION_SHA256"],
         "gradle": pins["GRADLE_VERSION"],
         "jna": pins["JNA_VERSION"],
         "kotlin": pins["KOTLIN_VERSION"],
