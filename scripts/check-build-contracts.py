@@ -161,6 +161,14 @@ def check_android_contract(errors, pins):
             }
             require(errors, required_artifacts.issubset(verified_artifacts),
                     "Android dependency verification omits a required runtime or Linux build artifact")
+            required_metadata_artifacts = {
+                ("com.google.guava", "guava-parent", "33.3.1-jre",
+                 "guava-parent-33.3.1-jre.pom"),
+                ("org.junit", "junit-bom", "5.10.2", "junit-bom-5.10.2.module"),
+                ("org.junit", "junit-bom", "5.11.0-M2", "junit-bom-5.11.0-M2.module"),
+            }
+            require(errors, required_metadata_artifacts.issubset(verified_artifacts),
+                    "Android dependency verification omits hosted fresh-resolution metadata")
             hash_nodes = root.findall(".//v:sha256", namespace)
             require(errors, bool(hash_nodes) and all(
                 re.fullmatch(r"[0-9a-f]{64}", node.get("value", "")) for node in hash_nodes
@@ -169,6 +177,19 @@ def check_android_contract(errors, pins):
             "temporary AAR project does not install dependency verification metadata")
     require(errors, "--dependency-verification strict" in build,
             "temporary AAR build does not explicitly enforce strict dependency verification")
+    fresh_resolution = REPO_ROOT / "scripts" / "check-android-gradle-fresh-resolution.py"
+    require(errors, fresh_resolution.is_file() and not fresh_resolution.is_symlink(),
+            "Android fresh Gradle resolution regression is missing or unsafe")
+    if fresh_resolution.is_file():
+        regression = fresh_resolution.read_text(encoding="utf-8")
+        require(errors, "GRADLE_USER_HOME" in regression,
+                "Android fresh Gradle resolution regression does not isolate Gradle cache")
+        require(errors, "--dependency-verification" in regression and "strict" in regression,
+                "Android fresh Gradle resolution regression does not enforce strict verification")
+        require(errors, "--offline" in regression,
+                "Android fresh Gradle resolution regression does not repeat from cache offline")
+        require(errors, "com.android.tools.build:gradle:" in regression,
+                "Android fresh Gradle resolution regression does not resolve the AGP classpath")
 
     require(errors, '"androidx_annotation": pins["ANDROIDX_ANNOTATION_VERSION"]' in manifest,
             "artifact toolchain omits the AndroidX Annotation version")
